@@ -17,6 +17,9 @@ class GitHubHook
    * @since 1.0
    */
   private $_remoteIp = '';
+  
+  // Tony patch
+  public $log_file = '/var/log/github_hook.log';
 
   /**
    * @var object Payload from GitHub.
@@ -111,7 +114,7 @@ class GitHubHook
    */
   public function log($message) {
     if ($this->_debug) {
-      file_put_contents('log/hook.log', '[' . date('Y-m-d H:i:s') . '] - ' . $message . PHP_EOL, FILE_APPEND);
+      file_put_contents($log_file, '[' . date('Y-m-d H:i:s') . '] - ' . $message . PHP_EOL, FILE_APPEND);
     }
   }
 
