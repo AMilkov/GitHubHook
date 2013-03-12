@@ -1,5 +1,106 @@
 <?php
-error_reporting(0);
+// error_reporting(0);
+error_reporting(E_ALL);
+
+
+class IP4Filter { 
+
+    private static $_IP_TYPE_SINGLE = 'single'; 
+    private static $_IP_TYPE_WILDCARD = 'wildcard'; 
+    private static $_IP_TYPE_MASK = 'mask'; 
+    private static $_IP_TYPE_CIDR = 'CIDR'; 
+    private static $_IP_TYPE_SECTION = 'section'; 
+    private $_allowed_ips = array(); 
+
+    public function __construct($allowed_ips) { 
+        $this->_allowed_ips = $allowed_ips; 
+    } 
+
+    public function check($ip, $allowed_ips = null) { 
+        $allowed_ips = $allowed_ips ? $allowed_ips : $this->_allowed_ips; 
+
+        foreach ($allowed_ips as $allowed_ip) { 
+            $type = $this->_judge_ip_type($allowed_ip); 
+            $sub_rst = call_user_func(array($this, '_sub_checker_' . $type), $allowed_ip, $ip);
+ 
+            if ($sub_rst) { 
+                return true; 
+            } 
+        } 
+
+        return false; 
+    } 
+
+    private function _judge_ip_type($ip) { 
+        if (strpos($ip, '*')) { 
+            return self :: $_IP_TYPE_WILDCARD; 
+        } 
+
+        if (strpos($ip, '/')) { 
+            $tmp = explode('/', $ip); 
+            if (strpos($tmp[1], '.')) { 
+                return self :: $_IP_TYPE_MASK; 
+            } else { 
+                return self :: $_IP_TYPE_CIDR; 
+            } 
+        } 
+
+        if (strpos($ip, '-')) { 
+            return self :: $_IP_TYPE_SECTION; 
+        } 
+
+        if (ip2long($ip)) { 
+            return self :: $_IP_TYPE_SINGLE; 
+        } 
+
+        return false; 
+    } 
+
+    private function _sub_checker_single($allowed_ip, $ip) { 
+        return (ip2long($allowed_ip) == ip2long($ip)); 
+    } 
+
+    private function _sub_checker_wildcard($allowed_ip, $ip) { 
+        $allowed_ip_arr = explode('.', $allowed_ip); 
+        $ip_arr = explode('.', $ip); 
+        for ($i = 0; $i < count($allowed_ip_arr); $i++) { 
+            if ($allowed_ip_arr[$i] == '*') { 
+                return true; 
+            } else { 
+                if (false == ($allowed_ip_arr[$i] == $ip_arr[$i])) { 
+                    return false; 
+                } 
+            } 
+        } 
+    } 
+
+    private function _sub_checker_mask($allowed_ip, $ip) { 
+        list($allowed_ip_ip, $allowed_ip_mask) = explode('/', $allowed_ip); 
+        $begin = (ip2long($allowed_ip_ip) & ip2long($allowed_ip_mask)) + 1; 
+        $end = (ip2long($allowed_ip_ip) | (~ ip2long($allowed_ip_mask))) + 1; 
+        $ip = ip2long($ip); 
+        return ($ip >= $begin && $ip <= $end); 
+    } 
+
+    private function _sub_checker_section($allowed_ip, $ip) { 
+        list($begin, $end) = explode('-', $allowed_ip); 
+        $begin = ip2long($begin); 
+        $end = ip2long($end); 
+        $ip = ip2long($ip); 
+        return ($ip >= $begin && $ip <= $end); 
+    } 
+
+    private function _sub_checker_CIDR($CIDR, $IP) { 
+        list ($net, $mask) = explode('/', $CIDR); 
+        return ( ip2long($IP) & ~((1 << (32 - $mask)) - 1) ) == ip2long($net); 
+    } 
+
+} 
+
+
+
+
+
 
 /**
  * GitHub Post-Receive Deployment Hook.
@@ -19,7 +120,8 @@ class GitHubHook
   private $_remoteIp = '';
   
   // Tony patch
-  public $log_file = '/var/log/github_hook.log';
+  // public $log_file = '/var/log/github_hook.log';
+  public $log_file = 'e:/tmp/log.log';
 
   /**
    * @var object Payload from GitHub.
@@ -31,7 +133,7 @@ class GitHubHook
    * @var boolean Log debug messages.
    * @since 1.0
    */
-  private $_debug = FALSE;
+  private $_debug = TRUE;
 
   /**
    * @var array Branches.
@@ -43,8 +145,7 @@ class GitHubHook
    * @var array GitHub's IP addresses for hooks.
    * @since 1.1
    */
-  private $_ips = array('54.235.183.49', '54.235.183.23', '54.235.118.251', '54.235.120.57', '54.235.120.61', '54.235.120.62');
-  // Some changes are here: 207.97.227.253/32, 50.57.128.197/32, 108.171.174.178/32, 50.57.231.61/32, 204.232.175.64/27, 192.30.252.0/22
+  private $_ips = array('207.97.227.253', '50.57.128.197', '108.171.174.178', '50.57.231.61', '204.232.175.64/27', '192.30.252.0/22', '127.0.0.1');
 
   /**
    * Constructor.
@@ -80,6 +181,7 @@ class GitHubHook
 
     header('HTTP/1.1 404 Not Found');
     echo '404 Not Found.';
+	// print "<br>Reason => $reason<br>Debug: ".print_r($this->_debug)."<br>Log file => $this->log_file";
     exit;
   }
 
@@ -115,8 +217,9 @@ class GitHubHook
    */
   public function log($message) {
     if ($this->_debug) {
-      file_put_contents($log_file, '[' . date('Y-m-d H:i:s') . '] - ' . $message . PHP_EOL, FILE_APPEND);
-    }
+      file_put_contents($this->log_file, '[' . date('Y-m-d H:i:s') . '] - ' . $message . PHP_EOL, FILE_APPEND);
+	  // print "<br>Result from fps is: $i<br>";
+	} 
   }
 
   /**
@@ -124,12 +227,15 @@ class GitHubHook
    * @since 1.0
    */
   public function deploy() {
-    if (in_array($this->_remoteIp, $this->_ips)) {
+	$IPfilter = New IP4Filter($this->_ips);
+    // if (in_array($this->_remoteIp, $this->_ips)) {
+	if ($IPfilter->check($this->_remoteIp)) {
       foreach ($this->_branches as $branch) {
         if ($this->_payload->ref == 'refs/heads/' . $branch['name']) {
 
           $this->log('Deploying to ' . $branch['title'] . ' server');
-          shell_exec('./deploy.sh ' . $branch['path'] . ' ' . $branch['name']);
+          $_output = shell_exec('./deploy.sh ' . $branch['path'] . ' ' . $branch['name'] . ' 2>&1');
+		  $this->log($_output);
         }
       }
     } else {
